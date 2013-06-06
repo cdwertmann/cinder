@@ -25,3 +25,4 @@
 from hp_lefthand import HpSanISCSIDriver
 from san import SanISCSIDriver
 from solaris import SolarisISCSIDriver
+from ds3500 import DS3500ISCSIDriver
