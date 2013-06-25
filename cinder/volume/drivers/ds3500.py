@@ -46,7 +46,6 @@ ds3500_opts = [
 FLAGS = flags.FLAGS
 FLAGS.register_opts(ds3500_opts)
 
-
 class DS3500ISCSIDriver(SanISCSIDriver):
     """Executes commands relating to DS3500-hosted ISCSI volumes.
         
@@ -62,7 +61,7 @@ class DS3500ISCSIDriver(SanISCSIDriver):
     def do_setup(self, ctxt):
         """Check that we have all configuration details from the storage."""
         
-#        LOG.debug(_('enter: do_setup'))
+        LOG.debug(_('enter: do_setup'))
 #        self._context = ctxt
 #        
 #        # Validate that the pool exists
@@ -155,7 +154,7 @@ class DS3500ISCSIDriver(SanISCSIDriver):
     
     def check_for_setup_error(self):
         """Ensure that the flags are set properly."""
-#        LOG.debug(_('enter: check_for_setup_error'))
+        LOG.debug(_('enter: check_for_setup_error'))
 #        
 #        required_flags = ['san_ip', 'san_ssh_port', 'san_login',
 #                          'storwize_svc_volpool_name']
@@ -186,6 +185,7 @@ class DS3500ISCSIDriver(SanISCSIDriver):
 #        LOG.debug(_('leave: check_for_setup_error'))
     
     def __init__(self, *cmd, **kwargs):
+        LOG.debug(_('enter: __init__'))        
         super(DS3500ISCSIDriver, self).__init__(*cmd,
                                                  execute=self._execute,
                                                  **kwargs)
@@ -447,10 +447,12 @@ class DS3500ISCSIDriver(SanISCSIDriver):
         self._execute(cmd)
 
     def create_snapshot(self, snapshot):
-        source_vol = self.db.volume_get(self._context, snapshot['volume_id'])
-        opts = self._get_vdisk_params(source_vol['volume_type_id'])
-        self._create_copy(src_vdisk=snapshot['volume_name'],
-                          tgt_vdisk=snapshot['name'],
+        LOG.debug(vars(snapshot))
+        #source_vol = self.db.volume_get(self._context, snapshot['volume_id'])
+        #opts = self._get_vdisk_params(source_vol['volume_type_id'])
+        opts = None
+        self._create_copy(src_vdisk=snapshot['volume_id'],
+                          tgt_vdisk=snapshot['id'],
                           full_copy=False,
                           opts=opts,
                           src_id=snapshot['volume_id'],
@@ -525,25 +527,25 @@ class DS3500ISCSIDriver(SanISCSIDriver):
         data = {}
         backend_name = self.configuration.safe_get('volume_backend_name')
         data["volume_backend_name"] = backend_name or 'Generic_iSCSI'
-        data["vendor_name"] = 'Open Source'
+        data["vendor_name"] = 'IBM'
         data["driver_version"] = '1.0'
         data["storage_protocol"] = 'iSCSI'
 
         data['total_capacity_gb'] = 'infinite' # to be overwritten
         data['free_capacity_gb'] = 'infinite' # to be overwritten
-        data['reserved_percentage'] = 100
+        data['reserved_percentage'] = 0
         data['QoS_support'] = False
 
-        cmd = 'show array ["%s"];' % configuration.ds3500_array
+        cmd = 'show array ["%s"];' % self.configuration.ds3500_array
         (out, _err) = self._execute(cmd)
         lines = self._collect_lines(out)
         for line in lines:
             items = line.split()
             if len(items) > 2:
                 if items[0] == "Capacity:":
-                    data['total_capacity_gb'] = int(float(items[1].strip().replace(',','')))
+                    data['total_capacity_gb'] = float(items[1].strip().replace(',',''))
                 elif items[0] == "Free" and items[1] == "Capacity:":
-                    data['free_capacity_gb'] = int(float(items[2].strip().replace(',','')))
+                    data['free_capacity_gb'] = float(items[2].strip().replace(',',''))
 
         self._stats = data
 
@@ -555,30 +557,40 @@ class DS3500ISCSIDriver(SanISCSIDriver):
                     'vdisk %(src_vdisk)s') %
                   {'tgt_vdisk': tgt_vdisk, 'src_vdisk': src_vdisk})
         
-        src_vdisk_attributes = self._get_vdisk_attributes(src_vdisk)
-        if src_vdisk_attributes is None:
-            exception_msg = (
-                             _('_create_copy: Source vdisk %s does not exist')
-                             % src_vdisk)
-            LOG.error(exception_msg)
-            if from_vol:
-                raise exception.VolumeNotFound(exception_msg,
-                                               volume_id=src_id)
-            else:
-                raise exception.SnapshotNotFound(exception_msg,
-                                                 snapshot_id=src_id)
+#        src_vdisk_attributes = self._get_vdisk_attributes(src_vdisk)
+#        if src_vdisk_attributes is None:
+#            exception_msg = (
+#                             _('_create_copy: Source vdisk %s does not exist')
+#                             % src_vdisk)
+#            LOG.error(exception_msg)
+#            if from_vol:
+#                raise exception.VolumeNotFound(exception_msg,
+#                                               volume_id=src_id)
+#            else:
+#                raise exception.SnapshotNotFound(exception_msg,
+#                                                 snapshot_id=src_id)
         
-        self._driver_assert(
-                            'capacity' in src_vdisk_attributes,
-                            _('_create_copy: cannot get source vdisk '
-                              '%(src)s capacity from vdisk attributes '
-                              '%(attr)s')
-                            % {'src': src_vdisk,
-                            'attr': src_vdisk_attributes})
+#        self._driver_assert(
+#                            'capacity' in src_vdisk_attributes,
+#                            _('_create_copy: cannot get source vdisk '
+#                              '%(src)s capacity from vdisk attributes '
+#                              '%(attr)s')
+#                            % {'src': src_vdisk,
+#                            'attr': src_vdisk_attributes})
         
-        src_vdisk_size = src_vdisk_attributes['capacity']
-        self._create_vdisk(tgt_vdisk, src_vdisk_size, 'b', opts)
-        self._run_flashcopy(src_vdisk, tgt_vdisk, full_copy)
+        vol={}
+        vol['size']=1
+        vol['id']=tgt_vdisk
+        self.create_volume(vol)
+
+        cmd = 'create VolumeCopy source="%s" target="%s";' % (src_vdisk[:30], tgt_vdisk[:30])
+        
+        if not self._execute_with_retry(cmd):
+            msg = 'Unable to copy volume "%s" to "%s".' % (src_vdisk[:30], tgt_vdisk[:30])
+            raise exception.VolumeBackendAPIException(data=msg)
+        #src_vdisk_size = 1
+        #self._create_vdisk(tgt_vdisk, src_vdisk_size, 'b', opts)
+        #self._run_flashcopy(src_vdisk, tgt_vdisk, full_copy)
         
         LOG.debug(_('leave: _create_copy: snapshot %(tgt_vdisk)s from '
                     'vdisk %(src_vdisk)s') %

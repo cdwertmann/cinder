@@ -102,8 +102,8 @@ MAPPING = {
     'cinder.volume.drivers.zadara.ZadaraVPSAISCSIDriver',
     'cinder.volume.driver.ISCSIDriver':
     'cinder.volume.drivers.lvm.LVMISCSIDriver',
-    'cinder.volume.san.DS3500ISCSIDriver':
-    'cinder.volume.drivers.san.ds3500.DS3500ISCSIDriver'}
+    'cinder.volume.ds3500.DS3500ISCSIDriver':
+    'cinder.volume.drivers.ds3500.DS3500ISCSIDriver'}
 
 
 class VolumeManager(manager.SchedulerDependentManager):
