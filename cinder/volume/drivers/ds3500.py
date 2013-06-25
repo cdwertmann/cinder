@@ -511,17 +511,41 @@ class DS3500ISCSIDriver(SanISCSIDriver):
     """====================================================================="""
     
     def get_volume_stats(self, refresh=False):
-        if refresh or not self._stats:
-            self._stats = dict(
-                               volume_backend_name=self.configuration.volume_backend_name or 'DS3500',
-                               vendor_name='Open Source',
-                               driver_version='1.0',
-                               storage_protocol='iscsi',
-                               total_capacity_gb=1000,
-                               free_capacity_gb=999,
-                               reserved_percentage=0)
+        """Get volume status.
+            If 'refresh' is True, run update the stats first."""
+        if refresh:
+            self._update_volume_status()
         
         return self._stats
+
+    def _update_volume_status(self):
+        """Retrieve status info from volume group."""
+
+        LOG.debug(_("Updating volume status"))
+        data = {}
+        backend_name = self.configuration.safe_get('volume_backend_name')
+        data["volume_backend_name"] = backend_name or 'Generic_iSCSI'
+        data["vendor_name"] = 'Open Source'
+        data["driver_version"] = '1.0'
+        data["storage_protocol"] = 'iSCSI'
+
+        data['total_capacity_gb'] = 'infinite' # to be overwritten
+        data['free_capacity_gb'] = 'infinite' # to be overwritten
+        data['reserved_percentage'] = 100
+        data['QoS_support'] = False
+
+        cmd = 'show array ["%s"];' % configuration.ds3500_array
+        (out, _err) = self._execute(cmd)
+        lines = self._collect_lines(out)
+        for line in lines:
+            items = line.split()
+            if len(items) > 2:
+                if items[0] == "Capacity:":
+                    data['total_capacity_gb'] = int(float(items[1].strip().replace(',','')))
+                elif items[0] == "Free" and items[1] == "Capacity:":
+                    data['free_capacity_gb'] = int(float(items[2].strip().replace(',','')))
+
+        self._stats = data
 
     def _create_copy(self, src_vdisk, tgt_vdisk, full_copy, opts, src_id,
                      from_vol):
