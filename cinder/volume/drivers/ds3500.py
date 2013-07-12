@@ -20,6 +20,7 @@ from cinder.openstack.common import log as logging
 from cinder.volume.drivers.san.san import SanISCSIDriver
 
 from random import choice
+from time import sleep
 
 LOG = logging.getLogger(__name__)
 
@@ -443,8 +444,12 @@ class DS3500ISCSIDriver(SanISCSIDriver):
     def delete_volume(self, volume):
         """Deletes a volume."""
         vol = self._build_vol_name(volume)
-        cmd = 'start logicalDrive ["%s"] initialize; delete logicalDrive ["%s"];' % (vol,vol)
-        self._execute(cmd)
+        # initialize doesn't work with snapshots
+        #cmd = 'start logicalDrive ["%s"] initialize; delete logicalDrive ["%s"];' % (vol,vol)
+        cmd = 'delete logicalDrive ["%s"];' % (vol)
+        if not self._execute_with_retry(cmd):
+            msg = 'Unable to delete volume: "%s".' % volume['id']
+            raise exception.VolumeBackendAPIException(data=msg)
 
     def create_snapshot(self, snapshot):
         LOG.debug(vars(snapshot))
@@ -467,9 +472,9 @@ class DS3500ISCSIDriver(SanISCSIDriver):
                                    'Source and destination size differ.'))
             raise exception.VolumeBackendAPIException(data=exception_message)
         
-        opts = self._get_vdisk_params(volume['volume_type_id'])
-        self._create_copy(src_vdisk=snapshot['name'],
-                          tgt_vdisk=volume['name'],
+        opts = None
+        self._create_copy(src_vdisk=snapshot['id'],
+                          tgt_vdisk=volume['id'],
                           full_copy=True,
                           opts=opts,
                           src_id=snapshot['id'],
@@ -481,9 +486,9 @@ class DS3500ISCSIDriver(SanISCSIDriver):
                                    'Source and destination size differ.'))
             raise exception.VolumeBackendAPIException(data=exception_message)
         
-        opts = self._get_vdisk_params(tgt_volume['volume_type_id'])
-        self._create_copy(src_vdisk=src_volume['name'],
-                          tgt_vdisk=tgt_volume['name'],
+        opts = None
+        self._create_copy(src_vdisk=src_volume['id'],
+                          tgt_vdisk=tgt_volume['id'],
                           full_copy=True,
                           opts=opts,
                           src_id=src_volume['id'],
@@ -584,13 +589,16 @@ class DS3500ISCSIDriver(SanISCSIDriver):
         self.create_volume(vol)
 
         cmd = 'create VolumeCopy source="%s" target="%s";' % (src_vdisk[:30], tgt_vdisk[:30])
-        
         if not self._execute_with_retry(cmd):
             msg = 'Unable to copy volume "%s" to "%s".' % (src_vdisk[:30], tgt_vdisk[:30])
             raise exception.VolumeBackendAPIException(data=msg)
-        #src_vdisk_size = 1
-        #self._create_vdisk(tgt_vdisk, src_vdisk_size, 'b', opts)
-        #self._run_flashcopy(src_vdisk, tgt_vdisk, full_copy)
+
+        # Check every 10s whether copy has completed
+        while True:
+            sleep(10)
+            cmd = 'show volumeCopy target ["%s"];' % tgt_vdisk[:30]
+            (out, _err) = self._execute(cmd)
+            if "Copy status: In progress" not in out: break
         
         LOG.debug(_('leave: _create_copy: snapshot %(tgt_vdisk)s from '
                     'vdisk %(src_vdisk)s') %
@@ -612,7 +620,7 @@ class DS3500ISCSIDriver(SanISCSIDriver):
 
     def _get_free_lun(self):
         self.free_luns.sort()
-        LOG.debug(self.free_luns)
+        #LOG.debug(self.free_luns)
         if len(self.free_luns)>0:
             return self.free_luns.pop(0)
         else:
